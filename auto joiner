@@ -5009,6 +5009,16 @@ local function createRuntime()
             return false
         end
 
+        -- ============ FIX CHET LA NHAN LAI QUEST ============
+        -- BANG SONG TRUOC. Main.Quest bi stale - do duoc tren acc lv376 no van
+        -- ghi "DEFEAT 5 BANDITS (0/5)" tu hoi acc con lv1. Doc no truoc thi co
+        -- the ket luan "dang co quest con quai nay" cho mot quest het tu lau,
+        -- roi bo qua buoc nhan quest that.
+        local trackedMob = API.TrackedQuest ~= nil and API.TrackedQuest() or nil
+        if trackedMob ~= nil then
+            return covers(trackedMob)
+        end
+
         local ok, text = pcall(function()
             return LocalPlayer.PlayerGui.Main.Quest.Container.QuestTitle.Title.Text
         end)
@@ -5055,13 +5065,98 @@ local function createRuntime()
     -- quest 8 con qua 5 phut la binh thuong; het han giua chung la nhan lai va
     -- RESET bo dem - dung cai "lau lau tu nhan lai khi vua farm xong bai quai".
     -- Han nay chi de go cho quest bi mat theo duong khac, khong phai de dem gio.
+    -- ============ FIX CHET LA NHAN LAI QUEST ============
+    -- BANG QUEST SONG. Do bang MCP tren acc lv376:
+    --   TrackedQuestFrame.Frame.header.textLabel = "Defeat 8 Fishman Warriors"
+    --   TrackedQuestFrame.Frame.description      = "Fishman Warrior"  <- TEN MOB,
+    --                                               sach va SO IT, khong phai
+    --                                               tieu de so nhieu
+    --   TrackedQuestFrame.Frame.progress         = "0/8"
+    -- Cung luc do Main.Quest.Container.QuestTitle.Title van ghi "DEFEAT 5
+    -- BANDITS (0/5)" tu hoi acc con lv1, va Main.Quest.Visible = false - dung
+    -- cai stale ma ghi chu duoi day canh bao. TrackedQuestFrame moi la bang
+    -- song, va no co ca abandonQuestButton nen chi hien khi thuc su co quest.
+    --
+    -- Tra ve mobName, soDaLam, soCan. nil = khong doc duoc hoac khong co quest.
+    function API.TrackedQuest()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        local screen = playerGui ~= nil
+            and playerGui:FindFirstChild("TrackedQuestFrame") or nil
+        if screen == nil then
+            return nil
+        end
+        local enabledOk, enabled = pcall(function()
+            return screen.Enabled
+        end)
+        if enabledOk and enabled == false then
+            return nil
+        end
+        local frame = screen:FindFirstChild("Frame")
+        if frame == nil then
+            return nil
+        end
+        local visibleOk, visible = pcall(function()
+            return frame.Visible
+        end)
+        if visibleOk and visible == false then
+            return nil
+        end
+        local mob = nil
+        local description = frame:FindFirstChild("description")
+        if description ~= nil then
+            local ok, text = pcall(function()
+                return description.Text
+            end)
+            if ok and type(text) == "string" and text ~= "" then
+                mob = text
+            end
+        end
+        if mob == nil then
+            return nil
+        end
+        local done, total = nil, nil
+        local progress = frame:FindFirstChild("progress")
+        if progress ~= nil then
+            local ok, text = pcall(function()
+                return progress.Text
+            end)
+            if ok and type(text) == "string" then
+                local a, b = string.match(text, "(%d+)%s*/%s*(%d+)")
+                done, total = tonumber(a), tonumber(b)
+            end
+        end
+        return mob, done, total
+    end
+
     function API.QuestAlreadyTaken(key, mobName)
         local taken = runtime.questTaken
-        if taken == nil
-            or runtime.questCompletedTick ~= taken.stamp
-            or taken.deaths ~= (runtime.deathCount or 0)
-            or tick() - taken.at >= 900
-        then
+        if taken == nil then
+            return false
+        end
+        -- Quest cu DA XONG thi phai nhan quest moi, khong duoc coi la con.
+        if runtime.questCompletedTick ~= taken.stamp then
+            return false
+        end
+        -- ============ FIX CHET LA NHAN LAI QUEST ============
+        -- CHET KHONG CON TU DONG NGHIA LA MAT QUEST. Truoc day chi can
+        -- deathCount doi la ket luan mat roi nhan lai, ma StartQuest RESET bo
+        -- dem ve 0 - dung cai "chet mot cai la farm lai tu dau". Do tren acc
+        -- that: deathCount = 24 ma questTaken.deaths = 15.
+        --
+        -- Gio HOI bang quest song. Chi dung de XAC NHAN QUEST CON, tuyet doi
+        -- khong dung de ket luan MAT - doc khong ra thi roi ve cach cu.
+        if taken.deaths ~= (runtime.deathCount or 0) then
+            local wanted = mobName or taken.mob
+            local trackedMob = API.TrackedQuest ~= nil and API.TrackedQuest() or nil
+            if wanted ~= nil and trackedMob ~= nil and trackedMob == wanted then
+                -- Quest SONG SOT qua lan chet: dong moc lai de khong phai doc
+                -- bang moi vong, va KHONG nhan lai.
+                taken.deaths = runtime.deathCount or 0
+                return true
+            end
+            return false
+        end
+        if tick() - taken.at >= 900 then
             return false
         end
         if taken.key == tostring(key) then
